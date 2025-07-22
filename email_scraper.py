@@ -31,7 +31,7 @@ class EmailScraper:
         self.connected = False
         
     def connect_to_email(self, email_address: str, password: str, server: str = None, port: int = 993):
-        """Connect to email server using IMAP"""
+        """Connect to email server using IMAP with multiple authentication methods"""
         try:
             self.email_address = email_address
             
@@ -39,24 +39,56 @@ class EmailScraper:
             if not server:
                 server = self._detect_imap_server(email_address)
             
-            # Create SSL context
-            context = ssl.create_default_context()
-            
-            # Connect to server
             console.print(f"[yellow]Connecting to {server}:{port}...[/yellow]")
-            self.imap_server = imaplib.IMAP4_SSL(server, port, ssl_context=context)
             
-            # Login
-            console.print("[yellow]Authenticating...[/yellow]")
-            self.imap_server.login(email_address, password)
+            # Try different authentication methods
+            self.imap_server = self._try_different_auth_methods(email_address, password, server, port)
             
-            self.connected = True
-            console.print("[green]✓ Successfully connected to email server![/green]")
-            return True
+            if self.imap_server:
+                self.connected = True
+                console.print("[green]✓ Successfully connected to email server![/green]")
+                return True
+            else:
+                console.print("[red]❌ All authentication methods failed![/red]")
+                console.print("[yellow]💡 Suggestions:[/yellow]")
+                console.print("  • For Gmail/Google Workspace: Use App Password")
+                console.print("  • For corporate email: Contact your IT admin")
+                console.print("  • Check if IMAP is enabled in your email settings")
+                return False
             
         except Exception as e:
             console.print(f"[red]❌ Failed to connect: {str(e)}[/red]")
             return False
+    
+    def _try_different_auth_methods(self, email_addr: str, password: str, server: str, port: int = 993):
+        """Try different authentication methods"""
+        
+        methods_to_try = [
+            ("Standard SSL", lambda: imaplib.IMAP4_SSL(server, port)),
+            ("SSL with custom context", lambda: imaplib.IMAP4_SSL(server, port, ssl_context=ssl.create_default_context())),
+            ("Port 143 with STARTTLS", lambda: self._try_starttls(server)),
+        ]
+        
+        for method_name, connection_func in methods_to_try:
+            console.print(f"[blue]Trying {method_name}...[/blue]")
+            try:
+                imap = connection_func()
+                console.print("[yellow]Authenticating...[/yellow]")
+                imap.login(email_addr, password)
+                console.print(f"[green]✅ Success with {method_name}![/green]")
+                return imap
+            except Exception as e:
+                error_msg = str(e)[:100] + "..." if len(str(e)) > 100 else str(e)
+                console.print(f"[red]❌ {method_name} failed: {error_msg}[/red]")
+                continue
+        
+        return None
+    
+    def _try_starttls(self, server: str):
+        """Try IMAP with STARTTLS on port 143"""
+        imap = imaplib.IMAP4(server, 143)
+        imap.starttls()
+        return imap
     
     def _detect_imap_server(self, email_address: str) -> str:
         """Auto-detect IMAP server based on email domain"""
@@ -64,6 +96,7 @@ class EmailScraper:
         
         server_map = {
             'gmail.com': 'imap.gmail.com',
+            'sigsi.com': 'imap.gmail.com',  # Google Workspace
             'outlook.com': 'outlook.office365.com',
             'hotmail.com': 'outlook.office365.com',
             'live.com': 'outlook.office365.com',
